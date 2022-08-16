@@ -1,21 +1,15 @@
-package main
+package iferr
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"io"
-	"log"
-	"os"
 	"strings"
 )
 
 const noname = "(no name)"
-
-var dbgLog *log.Logger
 
 var isNum = map[string]struct{}{
 	"int":     struct{}{},
@@ -31,21 +25,18 @@ var isNum = map[string]struct{}{
 	"float64": struct{}{},
 }
 
-func logd(s string, args ...interface{}) {
-	if dbgLog == nil {
-		return
-	}
-	dbgLog.Printf(s, args...)
-}
-
-type visitor struct {
+type Visitor struct {
 	pos token.Pos
 	err error
 	ft  *ast.FuncType
 	fn  string
 }
 
-func (v *visitor) Visit(node ast.Node) ast.Visitor {
+type Field struct {
+	name string
+}
+
+func (v *Visitor) Visit(node ast.Node) ast.Visitor {
 	if node == nil {
 		return nil
 	}
@@ -68,7 +59,6 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 		}
 		v.fn = fname
 		v.ft = x.Type
-		logd("found a FuncDecl: name=%s pos=%d end=%d", v.fn, x.Pos(), x.End())
 		return v
 	case *ast.FuncLit:
 		if x.Type == nil || x.Body == nil {
@@ -79,18 +69,13 @@ func (v *visitor) Visit(node ast.Node) ast.Visitor {
 		}
 		v.fn = noname
 		v.ft = x.Type
-		logd("found a FuncLit: pos=%d end=%d", x.Pos(), x.End())
 		return v
 	default:
 		return v
 	}
 }
 
-type field struct {
-	name string
-}
-
-func toTypes(fl *ast.FieldList) []ast.Expr {
+func ToTypes(fl *ast.FieldList) []ast.Expr {
 	if fl == nil || len(fl.List) == 0 {
 		return nil
 	}
@@ -101,127 +86,106 @@ func toTypes(fl *ast.FieldList) []ast.Expr {
 	return types
 }
 
-func typeString(x ast.Expr) string {
+func TypeString(x ast.Expr) string {
 	switch t := x.(type) {
 	case *ast.Ident:
 		return t.Name
 	case *ast.SelectorExpr:
 		if _, ok := t.X.(*ast.Ident); ok {
-			return typeString(t.X) + "." + t.Sel.Name
+			return TypeString(t.X) + "." + t.Sel.Name
 		}
 	case *ast.StarExpr:
-		return "*" + typeString(t.X)
+		return "*" + TypeString(t.X)
 	case *ast.ArrayType:
-		return "[]" + typeString(t.Elt)
+		return "[]" + TypeString(t.Elt)
 	case *ast.InterfaceType:
 		return "interface{}"
 	case *ast.MapType:
-		return "map[" + typeString(t.Key) + "]" + typeString(t.Value)
+		return "map[" + TypeString(t.Key) + "]" + TypeString(t.Value)
 	case *ast.StructType:
 		return "struct{}"
 	case *ast.ChanType:
-		return "chan " + typeString(t.Value)
+		return "chan " + TypeString(t.Value)
 	default:
-		logd("typeString: unsupported type: %T", x)
+		return ""
 	}
 	return ""
 }
 
-func writeIferr(w io.Writer, types []ast.Expr) error {
+func GetIfErr(types []ast.Expr) (string, error) {
 	if len(types) == 0 {
-		_, err := fmt.Fprint(w, "if err != nil {\n\treturn\n}\n")
-		return err
+		return "if err != nil {\n\treturn\n}\n", nil
 	}
-	bb := &bytes.Buffer{}
-	bb.WriteString("if err != nil {\n\treturn ")
+	var sb strings.Builder
+	sb.WriteString("if err != nil {\n\treturn ")
 	for i, t := range types {
 		if i > 0 {
-			bb.WriteString(", ")
+			sb.WriteString(", ")
 		}
-		ts := typeString(t)
-		logd("  type#%d %s", i, ts)
+		ts := TypeString(t)
 		if ts == "bool" {
-			bb.WriteString(`false`)
+			sb.WriteString(`false`)
 			continue
 		}
 		if ts == "error" {
-			bb.WriteString("err")
+			sb.WriteString("err")
 			continue
 		}
 		if ts == "string" {
-			bb.WriteString(`""`)
+			sb.WriteString(`""`)
 			continue
 		}
 		if ts == "interface{}" {
-			bb.WriteString(`nil`)
+			sb.WriteString(`nil`)
 			continue
 		}
 		if _, ok := isNum[ts]; ok {
-			bb.WriteString("0")
+			sb.WriteString("0")
 			continue
 		}
 		if strings.HasPrefix(ts, "[]") {
-			bb.WriteString("nil")
+			sb.WriteString("nil")
 			continue
 		}
 		if strings.HasPrefix(ts, "map[") {
-			bb.WriteString("nil")
+			sb.WriteString("nil")
 			continue
 		}
 		if strings.HasPrefix(ts, "chan ") {
-			bb.WriteString("nil")
+			sb.WriteString("nil")
 			continue
 		}
 		if strings.HasPrefix(ts, "*") {
-			bb.WriteString("nil")
+			sb.WriteString("nil")
 			continue
 		}
 		// treat it as an interface when type name has "."
 		if strings.Index(ts, ".") >= 0 {
-			bb.WriteString("nil")
+			sb.WriteString("nil")
 			continue
 		}
 		// TODO: support more types.
-		bb.WriteString(ts)
-		bb.WriteString("{}")
+		sb.WriteString(ts)
+		sb.WriteString("{}")
 	}
-	bb.WriteString("\n}\n")
-	io.Copy(w, bb)
-	return nil
+	sb.WriteString("\n}\n")
+	return sb.String(), nil
 }
 
-func iferr(w io.Writer, r io.Reader, pos int) error {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "iferr.go", r, 0)
+func IfErr(data []byte, lineIndex int) (string, error) {
+	r := bytes.NewReader(data)
+	file, err := parser.ParseFile(token.NewFileSet(), "iferr.go", r, 0)
 	if err != nil {
-		return err
+		return "", err
 	}
-	v := &visitor{pos: token.Pos(pos)}
+	v := &Visitor{pos: token.Pos(lineIndex)}
 	ast.Walk(v, file)
 	if v.err != nil {
-		return err
+		return "", err
 	}
 	if v.ft == nil {
-		return fmt.Errorf("no functions at %d", pos)
+		return "", fmt.Errorf("no functions at %d", lineIndex)
 	}
-	types := toTypes(v.ft.Results)
-	return writeIferr(w, types)
-}
-
-func main() {
-	var (
-		pos   int
-		debug bool
-	)
-	flag.IntVar(&pos, "pos", 0, "position of cursor")
-	flag.BoolVar(&debug, "debug", false, "enable debug log")
-	flag.Parse()
-	if debug {
-		dbgLog = log.New(os.Stderr, "D ", 0)
-	}
-	err := iferr(os.Stdout, os.Stdin, pos)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		os.Exit(1)
-	}
+	types := ToTypes(v.ft.Results)
+	return GetIfErr(types)
 }

@@ -1,10 +1,6 @@
-package main
+package iferr
 
 import (
-	"bytes"
-	"flag"
-	"log"
-	"os"
 	"strings"
 	"testing"
 )
@@ -12,23 +8,8 @@ import (
 type foo struct {
 }
 
-func init() {
-	var debug bool
-	flag.BoolVar(&debug, "debug", false, "enable debug log")
-	flag.Parse()
-	if debug {
-		dbgLog = log.New(os.Stderr, "D ", 0)
-	}
-}
-
 func iferrStr(in string, pos int) (string, error) {
-	out := &bytes.Buffer{}
-	r := strings.NewReader(in)
-	err := iferr(out, r, pos)
-	if err != nil {
-		return "", err
-	}
-	return out.String(), nil
+	return IfErr([]byte(in), pos)
 }
 
 func iferrOK(t *testing.T, fn string, off int, exp string) {
