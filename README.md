@@ -1,7 +1,5 @@
 # IfErr
 
-This is a fork of [koron/iferr](https://github.com/koron/iferr).
+Generate an `if err != nil {` block given a source file and a line number, that suits the function at that line.
 
-# Generate "if err != nil {" block
-
-Generate `if err != nil {` block for the current function, as a Go module.
+This is a fork of [koron/iferr](https://github.com/koron/iferr), to make it into a Go package that can be used from other Go projects.
