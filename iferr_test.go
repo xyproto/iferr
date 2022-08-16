@@ -5,9 +5,6 @@ import (
 	"testing"
 )
 
-type foo struct {
-}
-
 func iferrStr(in string, pos int) (string, error) {
 	return IfErr([]byte(in), pos)
 }
