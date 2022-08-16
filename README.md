@@ -7,4 +7,4 @@ This is a fork of [koron/iferr](https://github.com/koron/iferr), to make it into
 # General info
 
 * License: MIT
-* Version: 1.0.0
+* Version: 1.1.0
